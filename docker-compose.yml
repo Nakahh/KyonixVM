@@ -1,0 +1,105 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: oci-provisioner-db
+    environment:
+      POSTGRES_DB: oci_auto_provisioner
+      POSTGRES_USER: ${DB_USER:-provisioner}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-provisioner_password}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-provisioner}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - provisioner_network
+
+  # Redis Cache/Queue
+  redis:
+    image: redis:7-alpine
+    container_name: oci-provisioner-redis
+    command: redis-server --requirepass ${REDIS_PASSWORD:-redis_password} --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - provisioner_network
+
+  # OCI Auto Provisioner API
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: oci-provisioner-app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://${DB_USER:-provisioner}:${DB_PASSWORD:-provisioner_password}@postgres:5432/oci_auto_provisioner
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_password}
+      # OCI Configuration (configure these)
+      OCI_TENANCY_OCID: ${OCI_TENANCY_OCID:-}
+      OCI_USER_OCID: ${OCI_USER_OCID:-}
+      OCI_FINGERPRINT: ${OCI_FINGERPRINT:-}
+      OCI_PRIVATE_KEY_PATH: ${OCI_PRIVATE_KEY_PATH:-/app/keys/oci_private_key.pem}
+      OCI_REGION: ${OCI_REGION:-us-phoenix-1}
+      # Scheduler and Worker
+      SCHEDULER_ENABLED: "true"
+      SCHEDULER_INTERVAL_SECONDS: 20
+      WORKER_ENABLED: "true"
+      WORKER_INTERVAL_SECONDS: 5
+    ports:
+      - "3000:3000"
+    volumes:
+      # Mount OCI keys (optional, comment out if using env vars)
+      # - ./keys:/app/keys:ro
+    networks:
+      - provisioner_network
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/api/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"]
+      interval: 30s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # Optional: Adminer for database UI
+  adminer:
+    image: adminer:latest
+    container_name: oci-provisioner-adminer
+    depends_on:
+      - postgres
+    ports:
+      - "8080:8080"
+    networks:
+      - provisioner_network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  provisioner_network:
+    driver: bridge
