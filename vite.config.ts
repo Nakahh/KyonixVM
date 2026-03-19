@@ -1,10 +1,12 @@
 import { defineConfig, Plugin } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
-import { createServer } from "./server";
+import { fileURLToPath } from "url";
 
-// https://vitejs.dev/config/
-export default defineConfig(({ mode }) => ({
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+export default defineConfig(() => ({
   server: {
     host: "::",
     port: 8080,
@@ -28,12 +30,23 @@ export default defineConfig(({ mode }) => ({
 function expressPlugin(): Plugin {
   return {
     name: "express-plugin",
-    apply: "serve", // Only apply during development (serve mode)
-    configureServer(server) {
-      const app = createServer();
+    apply: "serve",
+    async configureServer(server) {
+      try {
+        const mod = await import("./server");
+        const createServer = mod.createServer ?? mod.default;
 
-      // Add Express app as middleware to Vite dev server
-      server.middlewares.use(app);
+        if (typeof createServer !== "function") {
+          throw new Error(
+            'A função "createServer" não foi encontrada em ./server'
+          );
+        }
+
+        const app = await createServer();
+        server.middlewares.use(app);
+      } catch (error) {
+        console.error("Erro ao carregar o servidor Express:", error);
+      }
     },
   };
 }
