@@ -109,7 +109,7 @@ model Log {
   id        String   @id @default(cuid())
   level     String   @default("info") // debug, info, warn, error
   message   String
-  metadata  Json?
+  metadata  String?
   timestamp DateTime @default(now())
   
   @@index([level])
